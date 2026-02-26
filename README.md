@@ -14,7 +14,6 @@ the list and does the following:
 Dependencies:
 pip install dnspython
 
-Script Configuration:
 # Configuration
 # Where to store the project files
 PARENT_DIR="/var/log/MXed-Signals/"
