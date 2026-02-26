@@ -1,8 +1,8 @@
 # MXed-Signals
-# V1.0 
+# V1.1 
 
-
-Email DNS monitoring and alerting tool.
+DNS Record Monitor
+Monitors SPF, DMARC, and MX records for domains and alerts on changes.
 
 This python script takes a list of domains (default domains.txt) and loops through
 the list and does the following:
@@ -10,6 +10,9 @@ the list and does the following:
 - Retrives the MX, SPF, DMARC records from each authoratitive DNS Server
 - Compares the authoratitive DNS Server results and alerts on differences
 - Compares the results on the previous run, and alerts if the current values does not match the last values
+
+Dependencies:
+pip install dnspython
 
 Script Configuration:
 # Configuration
