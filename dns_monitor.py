@@ -16,13 +16,7 @@ import sys
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import time
 
-# DNS Query Retry Configuration
-DNS_RETRY_ATTEMPTS = 3  # Number of retry attempts for failed DNS queries
-DNS_RETRY_DELAY = 2  # Delay in seconds between retry attempts
-
-# ----- Configuration Section Begin -------
 # Configuration
 # Where to store the project files
 PARENT_DIR=""
@@ -67,12 +61,6 @@ EMAIL_TO = ["dnsmonitor@example.com", "noc@example.com"]
 # Email Alert Subject line Prefix
 EMAIL_SUBJECT_PREFIX = "[DNS Alert]"
 
-# DNS Query Retry Configuration
-DNS_RETRY_ATTEMPTS = 3  # Number of retry attempts for failed DNS queries
-DNS_RETRY_DELAY = 2  # Delay in seconds between retry attempts
-
-# ----- Configuration Section END -------
-
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -99,69 +87,54 @@ class DNSMonitor:
         self.resolver.nameservers = [dns_server]
         
     def get_authoritative_nameservers(self, domain: str) -> List[str]:
-        """Query for authoritative nameservers of a domain with retry logic."""
-        for attempt in range(1, DNS_RETRY_ATTEMPTS + 1):
-            try:
-                ns_records = self.resolver.resolve(domain, 'NS')
-                nameservers = [str(ns.target).rstrip('.') for ns in ns_records]
-                logger.info(f"Found authoritative nameservers for {domain}: {nameservers}")
-                return nameservers
-            except Exception as e:
-                if attempt < DNS_RETRY_ATTEMPTS:
-                    logger.warning(f"Attempt {attempt}/{DNS_RETRY_ATTEMPTS} - Error getting NS records for {domain}: {e}")
-                    logger.info(f"Retrying in {DNS_RETRY_DELAY} seconds...")
-                    time.sleep(DNS_RETRY_DELAY)
-                else:
-                    logger.error(f"Failed to get NS records for {domain} after {DNS_RETRY_ATTEMPTS} attempts: {e}")
-                    return []
-        return []
+        """Query for authoritative nameservers of a domain."""
+        try:
+            ns_records = self.resolver.resolve(domain, 'NS')
+            nameservers = [str(ns.target).rstrip('.') for ns in ns_records]
+            logger.info(f"Found authoritative nameservers for {domain}: {nameservers}")
+            return nameservers
+        except Exception as e:
+            logger.error(f"Error getting NS records for {domain}: {e}")
+            return []
     
     def query_authoritative_server(self, domain: str, record_type: str, 
                                    nameserver: str) -> List[str]:
-        """Query a specific authoritative nameserver for records with retry logic."""
-        for attempt in range(1, DNS_RETRY_ATTEMPTS + 1):
+        """Query a specific authoritative nameserver for records."""
+        try:
+            # Resolve the nameserver IP if needed
+            ns_resolver = dns.resolver.Resolver()
+            ns_resolver.nameservers = [self.dns_server]
+            ns_ip = str(ns_resolver.resolve(nameserver, 'A')[0])
+            
+            # Create and send query to authoritative server
+            query = dns.message.make_query(domain, record_type)
+            
+            # Try UDP first
             try:
-                # Resolve the nameserver IP if needed
-                ns_resolver = dns.resolver.Resolver()
-                ns_resolver.nameservers = [self.dns_server]
-                ns_ip = str(ns_resolver.resolve(nameserver, 'A')[0])
+                response = dns.query.udp(query, ns_ip, timeout=10)
                 
-                # Create and send query to authoritative server
-                query = dns.message.make_query(domain, record_type)
-                
-                # Try UDP first
-                try:
-                    response = dns.query.udp(query, ns_ip, timeout=10)
-                    
-                    # Check if response was truncated (TC flag set)
-                    if response.flags & dns.flags.TC:
-                        logger.info(f"Response truncated for {domain} {record_type}, switching to TCP")
-                        # Retry with TCP
-                        response = dns.query.tcp(query, ns_ip, timeout=10)
-                        logger.info(f"Successfully retrieved {domain} {record_type} via TCP")
-                        
-                except Exception as udp_error:
-                    # If UDP fails for any reason, try TCP as fallback
-                    logger.info(f"UDP query failed for {domain} {record_type}, attempting TCP: {udp_error}")
+                # Check if response was truncated (TC flag set)
+                if response.flags & dns.flags.TC:
+                    logger.info(f"Response truncated for {domain} {record_type}, switching to TCP")
+                    # Retry with TCP
                     response = dns.query.tcp(query, ns_ip, timeout=10)
                     logger.info(f"Successfully retrieved {domain} {record_type} via TCP")
-                
-                records = []
-                for answer in response.answer:
-                    for item in answer:
-                        records.append(str(item))
-                
-                return records
-                
-            except Exception as e:
-                if attempt < DNS_RETRY_ATTEMPTS:
-                    logger.warning(f"Attempt {attempt}/{DNS_RETRY_ATTEMPTS} - Error querying {nameserver} for {domain} {record_type}: {e}")
-                    logger.info(f"Retrying in {DNS_RETRY_DELAY} seconds...")
-                    time.sleep(DNS_RETRY_DELAY)
-                else:
-                    logger.warning(f"Failed to query {nameserver} for {domain} {record_type} after {DNS_RETRY_ATTEMPTS} attempts: {e}")
-                    return []
-        return []
+                    
+            except Exception as udp_error:
+                # If UDP fails for any reason, try TCP as fallback
+                logger.info(f"UDP query failed for {domain} {record_type}, attempting TCP: {udp_error}")
+                response = dns.query.tcp(query, ns_ip, timeout=10)
+                logger.info(f"Successfully retrieved {domain} {record_type} via TCP")
+            
+            records = []
+            for answer in response.answer:
+                for item in answer:
+                    records.append(str(item))
+            
+            return records
+        except Exception as e:
+            logger.warning(f"Error querying {nameserver} for {domain} {record_type}: {e}")
+            return []
     
     def get_spf_record(self, domain: str, nameserver: str) -> Optional[str]:
         """Get SPF record from authoritative nameserver."""
@@ -570,7 +543,7 @@ Please review these changes to ensure they are authorized.
                 server.starttls()
             
             # Only authenticate if username is configured
-            if SMTP_USERNAME and SMTP_USERNAME != "your-email@gmail.com":
+            if SMTP_USERNAME != "":
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
             
             server.send_message(msg)
