@@ -10,7 +10,7 @@ the list and does the following:
 
 Script Configuration:
 # Configuration
-# where to store the project files
+# Where to store the project files
 PARENT_DIR="/var/log/MXed-Signals/"
 
 # This is the initial server to learn the NS records.
@@ -19,13 +19,13 @@ DNS_SERVER = "8.8.8.8"
 # The list of domains to monitor
 DOMAINS_FILE = PARENT_DIR + "domains.txt"
 
-# where to store DNS values - for the comparison
+# Where to store DNS values - for the comparison
 STORAGE_FILE = PARENT_DIR + "dns_records.json" 
 
-# where to store the files results of each run
+# Where to store the files results of each run
 LOG_FILE = PARENT_DIR + "dns_monitor.log" 
 
-# seperate log file of alerts sent
+# Seperate log file of alerts sent
 ALERT_LOG_FILE = PARENT_DIR + "dns_alerts.log"
 
 
