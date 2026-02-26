@@ -1,4 +1,6 @@
 # MXed-Signals
+# V1.0 - Tony Schliesser tony.schliesser@gmail.com
+
 Email DNS monitoring and alerting tool.
 
 This python script takes a list of domains (default domains.txt) and loops through
