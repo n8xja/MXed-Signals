@@ -1,5 +1,6 @@
 # MXed-Signals
-# V1.0 - Tony Schliesser tony.schliesser@gmail.com
+# V1.0 
+
 
 Email DNS monitoring and alerting tool.
 
