@@ -30,13 +30,21 @@ ALERT_LOG_FILE = PARENT_DIR + "dns_alerts.log"
 
 
 # Email Configuration
+
 EMAIL_ENABLED = True  # Set to False to disable email alerts
+
 SMTP_SERVER = "127.0.0.1"  # Change to your SMTP server
+
 SMTP_PORT = 25  # Use 465 for SSL, 587 for TLS
+
 SMTP_USERNAME = ""  # Your email user id - empty setting means it does not use SMTP AUTH
+
 SMTP_PASSWORD = ""  # Your email app password
+
 EMAIL_FROM = "dnsmonitor@example.com"  # From address
+
 EMAIL_TO = ["dnsmonitor@example.com"]  # List of recipients
+
 EMAIL_SUBJECT_PREFIX = "[DNS Alert]"
 
 
