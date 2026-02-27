@@ -23,6 +23,7 @@ from email.mime.multipart import MIMEMultipart
 
 # Configuration
 # Where to store the project files
+# - leave empty to use current directory, or set to a specific path
 PARENT_DIR=""
 
 # The DNS server to retrieve the NS Records
@@ -43,14 +44,15 @@ ALERT_LOG_FILE = PARENT_DIR + "dns_alerts.log"
 # Email Configuration
 
 # Set to False to disable email alerts
-EMAIL_ENABLED = True  
+EMAIL_ENABLED = False  
 
-SMTP_SERVER = "127.0.0.1 " 
+SMTP_SERVER = "127.0.0.1" 
 
 # Use 465 for SSL, 587 for TLS
 SMTP_PORT = 25  
 
-# Your email address - empty setting means it does not use SMTP AUTH
+# Your email address / username 
+# - empty setting means it does not use SMTP AUTH
 SMTP_USERNAME = ""  
 
 # Your email password or app password
@@ -60,6 +62,7 @@ SMTP_PASSWORD = ""
 EMAIL_FROM = "dnsmonitor@example.com"  # From address
 
 # Where to send the alerts
+# - can send to more than one domain by separating with commas
 EMAIL_TO = ["dnsmonitor@example.com", "noc@example.com"]  
 
 # Email Alert Subject line Prefix
@@ -118,7 +121,7 @@ class DNSMonitor:
                 response = dns.query.udp(query, ns_ip, timeout=10)
                 
                 # Check if response was truncated (TC flag set)
-                if response.flags & dns.flags.TC:
+                if response.flags & dns.flags.TC: # type: ignore
                     logger.info(f"Response truncated for {domain} {record_type}, switching to TCP")
                     # Retry with TCP
                     response = dns.query.tcp(query, ns_ip, timeout=10)
@@ -347,7 +350,7 @@ def load_domains(filename: str) -> List[str]:
         return []
 
 
-def send_email_alert(domain: str, changes: Dict[str, bool], current: Dict, previous: Dict, inconsistencies: Dict = None):
+def send_email_alert(domain: str, changes: Dict[str, bool], current: Dict, previous: Dict, inconsistencies: Dict = None): # type: ignore
     """Send email alert for DNS record changes."""
     if not EMAIL_ENABLED:
         return
