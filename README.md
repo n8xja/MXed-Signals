@@ -15,6 +15,9 @@ Dependencies:
 pip install dnspython
 
 # Configuration
+
+Rename domains.example to domains.txt
+
 # Where to store the project files
 PARENT_DIR="/var/log/MXed-Signals/"
 
