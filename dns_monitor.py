@@ -2,6 +2,10 @@
 """
 DNS Record Monitor
 Monitors SPF, DMARC, and MX records for domains and alerts on changes.
+
+Dependencies:
+pip install dnspython
+
 """
 
 import dns.resolver
