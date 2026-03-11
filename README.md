@@ -1,9 +1,11 @@
 # MXed-Signals
 # V1.2 
 
-Changes:
+Changes: 
+V1.2 Resilience Updates
 Added Query throttle
 Added configuration feature to use environmental variables to set locations of domain list and log file
+Added a retry if the previous runs returned a value, but the current run connects but does not return a value
 
 DNS Record Monitor
 Monitors SPF, DMARC, and MX records for domains and alerts on changes.
