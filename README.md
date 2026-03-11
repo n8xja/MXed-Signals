@@ -49,5 +49,6 @@ Note: DNS_EMPTY_RESPONSE_RETRIES
 - 0 = no delay
 
 
-# Cron Example to Run every 15 minutes - make sure the user can write to the directories
- */15 * * * * user DNS_MONITOR_LOG_DIR=/var/log/MXed-Signals DNS_MONITOR_DOMAIN_DIR=/etc/MXed-Signals /usr/bin/python3 /opt/dns_monitor.py
+# Cron Example to Run every 15 minutes
+Make sure the user can write to the directories
+*/15 * * * * user DNS_MONITOR_LOG_DIR=/var/log/MXed-Signals DNS_MONITOR_DOMAIN_DIR=/etc/MXed-Signals /usr/bin/python3 /opt/dns_monitor.py
