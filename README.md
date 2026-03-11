@@ -1,5 +1,9 @@
 # MXed-Signals
-# V1.1 
+# V1.2 
+
+Changes:
+Added Query throttle
+Added configuration feature to use environmental variables to set locations of domain list and log file
 
 DNS Record Monitor
 Monitors SPF, DMARC, and MX records for domains and alerts on changes.
@@ -16,43 +20,34 @@ pip install dnspython
 
 # Configuration
 
-Rename domains.example to domains.txt
+Directory Configuration - Priority: Environment Variable > Script Variable > Current Directory
 
-# Where to store the project files
-PARENT_DIR="/var/log/MXed-Signals/"
+Environmental Variables:
+DNS_MONITOR_LOG_DIR - Where to store the logging output
+DNS_MONITOR_DOMAIN_DIR - Where to find the domain list
 
-# This is the initial server to learn the NS records.
-DNS_SERVER = "8.8.8.8" 
-
-# The list of domains to monitor
-DOMAINS_FILE = PARENT_DIR + "domains.txt"
-
-# Where to store DNS values - for the comparison
-STORAGE_FILE = PARENT_DIR + "dns_records.json" 
-
-# Where to store the files results of each run
-LOG_FILE = PARENT_DIR + "dns_monitor.log" 
-
-# Seperate log file of alerts sent
-ALERT_LOG_FILE = PARENT_DIR + "dns_alerts.log"
-
+If the directories or files do not exist, they will be created.
 
 # Email Configuration
-
 EMAIL_ENABLED = True  # Set to False to disable email alerts
-
 SMTP_SERVER = "127.0.0.1"  # Change to your SMTP server
-
 SMTP_PORT = 25  # Use 465 for SSL, 587 for TLS
-
 SMTP_USERNAME = ""  # Your email user id - empty setting means it does not use SMTP AUTH
-
 SMTP_PASSWORD = ""  # Your email app password
-
 EMAIL_FROM = "dnsmonitor@example.com"  # From address
-
 EMAIL_TO = ["dnsmonitor@example.com"]  # List of recipients
-
 EMAIL_SUBJECT_PREFIX = "[DNS Alert]"
 
+# DNS Query Retry Configuration
+DNS_RETRY_ATTEMPTS = 3  # Number of retry attempts for failed DNS queries
+DNS_RETRY_DELAY = 2  # Delay in seconds between retry attempts
+DNS_EMPTY_RESPONSE_RETRIES = 3  # Number of retries when getting empty response but previous value existed
+DNS_QUERY_THROTTLE = 0.5  # Delay in seconds between DNS queries to avoid rate limiting
 
+Note: DNS_EMPTY_RESPONSE_RETRIES
+- this was added to slow down and be kind to smaller dns servers or when network conditions might be unfavorable.
+- 0 = no delay
+
+
+# Cron Example to Run every 15 minutes - make sure the user can write to the directories
+ */15 * * * * user DNS_MONITOR_LOG_DIR=/var/log/MXed-Signals DNS_MONITOR_DOMAIN_DIR=/etc/MXed-Signals /usr/bin/python3 /opt/dns_monitor.py

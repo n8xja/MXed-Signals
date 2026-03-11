@@ -2,10 +2,6 @@
 """
 DNS Record Monitor
 Monitors SPF, DMARC, and MX records for domains and alerts on changes.
-
-Dependencies:
-pip install dnspython
-
 """
 
 import dns.resolver
@@ -20,52 +16,57 @@ import sys
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import time
+import os
 
 # Configuration
-# Where to store the project files
-# - leave empty to use current directory, or set to a specific path
-PARENT_DIR=""
-
-# The DNS server to retrieve the NS Records
 DNS_SERVER = "8.8.8.8"
 
-# Where to find the list of domains to monitor
-DOMAINS_FILE = PARENT_DIR + "domains.txt"
+# Directory Configuration - Priority: Environment Variable > Script Variable > Current Directory
+# Log Directory Configuration
+LOG_DIR_VAR = ""  # Set this to a path like "/var/log/dns-monitor" or leave empty
+LOG_DIR = os.getenv('DNS_MONITOR_LOG_DIR', LOG_DIR_VAR if LOG_DIR_VAR else os.getcwd())
+LOG_PATH = Path(LOG_DIR)
 
-# Where to store DNS Values for later comparision
-STORAGE_FILE = PARENT_DIR + "dns_records.json"
+# Domain List Directory Configuration  
+DOMAIN_LIST_DIR_VAR = ""  # Set this to a path like "/etc/dns-monitor" or leave empty
+DOMAIN_LIST_DIR = os.getenv('DNS_MONITOR_DOMAIN_DIR', DOMAIN_LIST_DIR_VAR if DOMAIN_LIST_DIR_VAR else os.getcwd())
+DOMAIN_LIST_PATH = Path(DOMAIN_LIST_DIR)
 
-# Where to store the results of each run
-LOG_FILE = PARENT_DIR + "dns_monitor.log"
+# Ensure directories exist
+LOG_PATH.mkdir(parents=True, exist_ok=True)
+DOMAIN_LIST_PATH.mkdir(parents=True, exist_ok=True)
 
-# Where to store the detected changes
-ALERT_LOG_FILE = PARENT_DIR + "dns_alerts.log"
+# File paths
+DOMAINS_FILE = str(DOMAIN_LIST_PATH / "domains.txt")
+STORAGE_FILE = str(LOG_PATH / "dns_records.json")
+LOG_FILE = str(LOG_PATH / "dns_monitor.log")
+ALERT_LOG_FILE = str(LOG_PATH / "dns_alerts.log")
+
+# Create empty domains file if it doesn't exist
+if not Path(DOMAINS_FILE).exists():
+    with open(DOMAINS_FILE, 'w') as f:
+        f.write("# Add one domain per line\n")
+        f.write("# Example:\n")
+        f.write("# example.com\n")
+        f.write("# google.com\n")
+    print(f"Created empty domain list file at: {DOMAINS_FILE}")
+    print("Please add domains to this file before running the script.")
+
+# DNS Query Retry Configuration
+DNS_RETRY_ATTEMPTS = 3  # Number of retry attempts for failed DNS queries
+DNS_RETRY_DELAY = 2  # Delay in seconds between retry attempts
+DNS_EMPTY_RESPONSE_RETRIES = 3  # Number of retries when getting empty response but previous value existed
+DNS_QUERY_THROTTLE = 0.5  # Delay in seconds between DNS queries to avoid rate limiting
 
 # Email Configuration
-
-# Set to False to disable email alerts
-EMAIL_ENABLED = False  
-
-SMTP_SERVER = "127.0.0.1" 
-
-# Use 465 for SSL, 587 for TLS
-SMTP_PORT = 25  
-
-# Your email address / username 
-# - empty setting means it does not use SMTP AUTH
-SMTP_USERNAME = ""  
-
-# Your email password or app password
-SMTP_PASSWORD = ""  
-
-# From address for the alert
-EMAIL_FROM = "dnsmonitor@example.com"  # From address
-
-# Where to send the alerts
-# - can send to more than one domain by separating with commas
-EMAIL_TO = ["dnsmonitor@example.com", "noc@example.com"]  
-
-# Email Alert Subject line Prefix
+EMAIL_ENABLED = True  # Set to False to disable email alerts
+SMTP_SERVER = "smtp.gmail.com"  # Change to your SMTP server
+SMTP_PORT = 587  # Use 465 for SSL, 587 for TLS
+SMTP_USERNAME = "your-email@gmail.com"  # Your email address
+SMTP_PASSWORD = "your-app-password"  # Your email password or app password
+EMAIL_FROM = "your-email@gmail.com"  # From address
+EMAIL_TO = ["alert-recipient@example.com"]  # List of recipients
 EMAIL_SUBJECT_PREFIX = "[DNS Alert]"
 
 # Setup logging
@@ -94,57 +95,96 @@ class DNSMonitor:
         self.resolver.nameservers = [dns_server]
         
     def get_authoritative_nameservers(self, domain: str) -> List[str]:
-        """Query for authoritative nameservers of a domain."""
-        try:
-            ns_records = self.resolver.resolve(domain, 'NS')
-            nameservers = [str(ns.target).rstrip('.') for ns in ns_records]
-            logger.info(f"Found authoritative nameservers for {domain}: {nameservers}")
-            return nameservers
-        except Exception as e:
-            logger.error(f"Error getting NS records for {domain}: {e}")
-            return []
+        """Query for authoritative nameservers of a domain with retry logic."""
+        for attempt in range(1, DNS_RETRY_ATTEMPTS + 1):
+            try:
+                ns_records = self.resolver.resolve(domain, 'NS')
+                nameservers = [str(ns.target).rstrip('.') for ns in ns_records]
+                logger.info(f"Found authoritative nameservers for {domain}: {nameservers}")
+                return nameservers
+            except Exception as e:
+                if attempt < DNS_RETRY_ATTEMPTS:
+                    logger.warning(f"Attempt {attempt}/{DNS_RETRY_ATTEMPTS} - Error getting NS records for {domain}: {e}")
+                    logger.info(f"Retrying in {DNS_RETRY_DELAY} seconds...")
+                    time.sleep(DNS_RETRY_DELAY)
+                else:
+                    logger.error(f"Failed to get NS records for {domain} after {DNS_RETRY_ATTEMPTS} attempts: {e}")
+                    return []
+        return []
     
     def query_authoritative_server(self, domain: str, record_type: str, 
                                    nameserver: str) -> List[str]:
-        """Query a specific authoritative nameserver for records."""
-        try:
-            # Resolve the nameserver IP if needed
-            ns_resolver = dns.resolver.Resolver()
-            ns_resolver.nameservers = [self.dns_server]
-            ns_ip = str(ns_resolver.resolve(nameserver, 'A')[0])
-            
-            # Create and send query to authoritative server
-            query = dns.message.make_query(domain, record_type)
-            
-            # Try UDP first
+        """Query a specific authoritative nameserver for records with retry logic."""
+        # Throttle DNS queries to avoid rate limiting
+        time.sleep(DNS_QUERY_THROTTLE)
+        
+        for attempt in range(1, DNS_RETRY_ATTEMPTS + 1):
             try:
-                response = dns.query.udp(query, ns_ip, timeout=10)
+                # Resolve the nameserver IP if needed
+                ns_resolver = dns.resolver.Resolver()
+                ns_resolver.nameservers = [self.dns_server]
+                ns_ip = str(ns_resolver.resolve(nameserver, 'A')[0])
                 
-                # Check if response was truncated (TC flag set)
-                if response.flags & dns.flags.TC: # type: ignore
-                    logger.info(f"Response truncated for {domain} {record_type}, switching to TCP")
-                    # Retry with TCP
+                # Create and send query to authoritative server
+                query = dns.message.make_query(domain, record_type)
+                
+                # Try UDP first
+                try:
+                    response = dns.query.udp(query, ns_ip, timeout=10)
+                    
+                    # Check if response was truncated (TC flag set)
+                    if response.flags & dns.flags.TC:
+                        logger.info(f"Response truncated for {domain} {record_type}, switching to TCP")
+                        # Retry with TCP
+                        response = dns.query.tcp(query, ns_ip, timeout=10)
+                        logger.info(f"Successfully retrieved {domain} {record_type} via TCP")
+                        
+                except Exception as udp_error:
+                    # If UDP fails for any reason, try TCP as fallback
+                    logger.info(f"UDP query failed for {domain} {record_type}, attempting TCP: {udp_error}")
                     response = dns.query.tcp(query, ns_ip, timeout=10)
                     logger.info(f"Successfully retrieved {domain} {record_type} via TCP")
-                    
-            except Exception as udp_error:
-                # If UDP fails for any reason, try TCP as fallback
-                logger.info(f"UDP query failed for {domain} {record_type}, attempting TCP: {udp_error}")
-                response = dns.query.tcp(query, ns_ip, timeout=10)
-                logger.info(f"Successfully retrieved {domain} {record_type} via TCP")
-            
-            records = []
-            for answer in response.answer:
-                for item in answer:
-                    records.append(str(item))
-            
-            return records
-        except Exception as e:
-            logger.warning(f"Error querying {nameserver} for {domain} {record_type}: {e}")
-            return []
+                
+                records = []
+                for answer in response.answer:
+                    for item in answer:
+                        records.append(str(item))
+                
+                return records
+                
+            except Exception as e:
+                if attempt < DNS_RETRY_ATTEMPTS:
+                    logger.warning(f"Attempt {attempt}/{DNS_RETRY_ATTEMPTS} - Error querying {nameserver} for {domain} {record_type}: {e}")
+                    logger.info(f"Retrying in {DNS_RETRY_DELAY} seconds...")
+                    time.sleep(DNS_RETRY_DELAY)
+                else:
+                    logger.warning(f"Failed to query {nameserver} for {domain} {record_type} after {DNS_RETRY_ATTEMPTS} attempts: {e}")
+                    return []
+        return []
     
-    def get_spf_record(self, domain: str, nameserver: str) -> Optional[str]:
-        """Get SPF record from authoritative nameserver."""
+    def get_spf_record(self, domain: str, nameserver: str, previous_value: Optional[str] = None) -> Optional[str]:
+        """Get SPF record from authoritative nameserver with retry on empty response."""
+        result = self._get_spf_record_internal(domain, nameserver)
+        
+        # If we got empty response but had a previous value, retry
+        if result is None and previous_value is not None:
+            logger.warning(f"Got empty SPF response for {domain} but previous value existed: {previous_value}")
+            for retry_attempt in range(1, DNS_EMPTY_RESPONSE_RETRIES + 1):
+                logger.info(f"Empty response retry {retry_attempt}/{DNS_EMPTY_RESPONSE_RETRIES} for SPF record")
+                time.sleep(DNS_RETRY_DELAY)
+                result = self._get_spf_record_internal(domain, nameserver)
+                if result is not None:
+                    logger.info(f"Successfully retrieved SPF record on retry {retry_attempt}")
+                    break
+            
+            # If still empty after all retries, log critical warning
+            if result is None:
+                logger.error(f"CRITICAL: SPF record for {domain} returned empty after {DNS_EMPTY_RESPONSE_RETRIES} retries, but previous value was: {previous_value}")
+        
+        return result
+    
+    def _get_spf_record_internal(self, domain: str, nameserver: str) -> Optional[str]:
+        """Internal method to get SPF record from authoritative nameserver."""
         try:
             txt_records = self.query_authoritative_server(domain, 'TXT', nameserver)
             for record in txt_records:
@@ -158,8 +198,29 @@ class DNSMonitor:
             logger.error(f"Error getting SPF for {domain}: {e}")
             return None
     
-    def get_dmarc_record(self, domain: str, nameserver: str) -> Optional[str]:
-        """Get DMARC record from authoritative nameserver."""
+    def get_dmarc_record(self, domain: str, nameserver: str, previous_value: Optional[str] = None) -> Optional[str]:
+        """Get DMARC record from authoritative nameserver with retry on empty response."""
+        result = self._get_dmarc_record_internal(domain, nameserver)
+        
+        # If we got empty response but had a previous value, retry
+        if result is None and previous_value is not None:
+            logger.warning(f"Got empty DMARC response for {domain} but previous value existed: {previous_value}")
+            for retry_attempt in range(1, DNS_EMPTY_RESPONSE_RETRIES + 1):
+                logger.info(f"Empty response retry {retry_attempt}/{DNS_EMPTY_RESPONSE_RETRIES} for DMARC record")
+                time.sleep(DNS_RETRY_DELAY)
+                result = self._get_dmarc_record_internal(domain, nameserver)
+                if result is not None:
+                    logger.info(f"Successfully retrieved DMARC record on retry {retry_attempt}")
+                    break
+            
+            # If still empty after all retries, log critical warning
+            if result is None:
+                logger.error(f"CRITICAL: DMARC record for {domain} returned empty after {DNS_EMPTY_RESPONSE_RETRIES} retries, but previous value was: {previous_value}")
+        
+        return result
+    
+    def _get_dmarc_record_internal(self, domain: str, nameserver: str) -> Optional[str]:
+        """Internal method to get DMARC record from authoritative nameserver."""
         dmarc_domain = f"_dmarc.{domain}"
         try:
             txt_records = self.query_authoritative_server(dmarc_domain, 'TXT', nameserver)
@@ -174,8 +235,29 @@ class DNSMonitor:
             logger.error(f"Error getting DMARC for {domain}: {e}")
             return None
     
-    def get_mx_records(self, domain: str, nameserver: str) -> List[str]:
-        """Get MX records from authoritative nameserver."""
+    def get_mx_records(self, domain: str, nameserver: str, previous_value: Optional[List[str]] = None) -> List[str]:
+        """Get MX records from authoritative nameserver with retry on empty response."""
+        result = self._get_mx_records_internal(domain, nameserver)
+        
+        # If we got empty response but had a previous value, retry
+        if not result and previous_value:
+            logger.warning(f"Got empty MX response for {domain} but previous value existed: {previous_value}")
+            for retry_attempt in range(1, DNS_EMPTY_RESPONSE_RETRIES + 1):
+                logger.info(f"Empty response retry {retry_attempt}/{DNS_EMPTY_RESPONSE_RETRIES} for MX records")
+                time.sleep(DNS_RETRY_DELAY)
+                result = self._get_mx_records_internal(domain, nameserver)
+                if result:
+                    logger.info(f"Successfully retrieved MX records on retry {retry_attempt}")
+                    break
+            
+            # If still empty after all retries, log critical warning
+            if not result:
+                logger.error(f"CRITICAL: MX records for {domain} returned empty after {DNS_EMPTY_RESPONSE_RETRIES} retries, but previous value was: {previous_value}")
+        
+        return result
+    
+    def _get_mx_records_internal(self, domain: str, nameserver: str) -> List[str]:
+        """Internal method to get MX records from authoritative nameserver."""
         try:
             mx_records = self.query_authoritative_server(domain, 'MX', nameserver)
             mx_list = sorted([str(mx) for mx in mx_records])
@@ -185,7 +267,7 @@ class DNSMonitor:
             logger.error(f"Error getting MX for {domain}: {e}")
             return []
     
-    def get_all_records(self, domain: str) -> Dict:
+    def get_all_records(self, domain: str, previous_records: Optional[Dict] = None) -> Dict:
         """Get all DNS records for a domain from all authoritative nameservers."""
         logger.info(f"\n{'='*60}")
         logger.info(f"Processing domain: {domain}")
@@ -201,14 +283,19 @@ class DNSMonitor:
                 'error': 'No authoritative nameservers found'
             }
         
+        # Extract previous values if available
+        prev_spf = previous_records.get('spf') if previous_records else None
+        prev_dmarc = previous_records.get('dmarc') if previous_records else None
+        prev_mx = previous_records.get('mx') if previous_records else None
+        
         # Query all authoritative nameservers
         all_ns_records = {}
         for nameserver in nameservers:
             logger.info(f"Querying authoritative nameserver: {nameserver}")
             
-            spf = self.get_spf_record(domain, nameserver)
-            dmarc = self.get_dmarc_record(domain, nameserver)
-            mx = self.get_mx_records(domain, nameserver)
+            spf = self.get_spf_record(domain, nameserver, prev_spf)
+            dmarc = self.get_dmarc_record(domain, nameserver, prev_dmarc)
+            mx = self.get_mx_records(domain, nameserver, prev_mx)
             
             all_ns_records[nameserver] = {
                 'spf': spf,
@@ -350,7 +437,7 @@ def load_domains(filename: str) -> List[str]:
         return []
 
 
-def send_email_alert(domain: str, changes: Dict[str, bool], current: Dict, previous: Dict, inconsistencies: Dict = None): # type: ignore
+def send_email_alert(domain: str, changes: Dict[str, bool], current: Dict, previous: Dict, inconsistencies: Dict = None):
     """Send email alert for DNS record changes."""
     if not EMAIL_ENABLED:
         return
@@ -550,7 +637,7 @@ Please review these changes to ensure they are authorized.
                 server.starttls()
             
             # Only authenticate if username is configured
-            if SMTP_USERNAME != "":
+            if SMTP_USERNAME and SMTP_USERNAME != "your-email@gmail.com":
                 server.login(SMTP_USERNAME, SMTP_PASSWORD)
             
             server.send_message(msg)
@@ -628,12 +715,16 @@ def main():
     """Main execution function."""
     logger.info(f"\n{'#'*60}")
     logger.info(f"DNS Monitor Started - {datetime.now().isoformat()}")
+    logger.info(f"Log Directory: {LOG_PATH.absolute()}")
+    logger.info(f"Domain List Directory: {DOMAIN_LIST_PATH.absolute()}")
+    logger.info(f"Domain List File: {DOMAINS_FILE}")
     logger.info(f"{'#'*60}\n")
     
     # Load domains
     domains = load_domains(DOMAINS_FILE)
     if not domains:
         logger.error("No domains to process. Exiting.")
+        logger.error(f"Please add domains to: {DOMAINS_FILE}")
         return
     
     # Initialize
@@ -643,15 +734,15 @@ def main():
     # Process each domain
     for domain in domains:
         try:
-            # Get current records
-            current_records = monitor.get_all_records(domain)
+            # Get previous records first
+            previous_records = storage.get_previous(domain)
+            
+            # Get current records (passing previous records for empty response retry logic)
+            current_records = monitor.get_all_records(domain, previous_records)
             
             # Skip if there was an error
             if 'error' in current_records:
                 continue
-            
-            # Get previous records
-            previous_records = storage.get_previous(domain)
             
             # Check for changes
             if previous_records:
